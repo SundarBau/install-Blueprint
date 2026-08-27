@@ -1,17 +1,17 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # ============================================================
 #                 BALE PTERODACTYL MANAGER
-#          Panel + Blueprint Addon Management Tool
+#        Panel + Blueprint Addon Management Tool
 #
 # GitHub:
 # https://github.com/SundarBau/install-Blueprint
 #
-# Direct run:
-# bash <(curl -fsSL https://raw.githubusercontent.com/SundarBau/install-Blueprint/main/addon-installer.sh)
+# Run:
+# bash <(curl -fsSL https://raw.githubusercontent.com/SundarBau/install-Blueprint/main/bale.sh)
 #
 # Recommended:
-# curl -fsSL https://raw.githubusercontent.com/SundarBau/install-Blueprint/main/addon-installer.sh | sudo bash
+# curl -fsSL https://raw.githubusercontent.com/SundarBau/install-Blueprint/main/bale.sh | sudo bash
 # ============================================================
 
 set -o pipefail
@@ -24,11 +24,13 @@ PTERODACTYL_DIR="/var/www/pterodactyl"
 BACKUP_DIR="/var/backups/pterodactyl"
 TEMP_DIR="/tmp/bale-pterodactyl-manager"
 
+SCRIPT_URL="https://raw.githubusercontent.com/SundarBau/install-Blueprint/main/bale.sh"
 INSTALLER_URL="https://pterodactyl-installer.se/"
 
-SCRIPT_URL="https://raw.githubusercontent.com/SundarBau/install-Blueprint/main/addon-installer.sh"
+SCRIPT_NAME="bale.sh"
+SCRIPT_VERSION="2.0.0"
 
-mkdir -p "$TEMP_DIR" 2>/dev/null
+mkdir -p "$TEMP_DIR" 2>/dev/null || true
 
 # ============================================================
 # COLORS
@@ -46,7 +48,26 @@ BOLD="\e[1m"
 RESET="\e[0m"
 
 # ============================================================
-# ROOT BOOTSTRAP
+# GLOBALS
+# ============================================================
+
+FILES=()
+
+# ============================================================
+# CLEANUP
+# ============================================================
+
+cleanup() {
+    find "$TEMP_DIR" \
+        -type f \
+        -mtime +1 \
+        -delete 2>/dev/null || true
+}
+
+trap cleanup EXIT
+
+# ============================================================
+# ROOT CHECK
 # ============================================================
 
 check_root() {
@@ -71,16 +92,17 @@ check_root() {
 
         echo -e "${YELLOW}Installing curl...${RESET}"
 
-        if ! command -v apt-get >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then
+
+            apt-get update -qq || true
+            apt-get install -y curl || {
+                echo -e "${RED}✗ Failed to install curl.${RESET}"
+                exit 1
+            }
+
+        else
+
             echo -e "${RED}✗ apt-get was not found.${RESET}"
-            exit 1
-        fi
-
-        sudo apt-get update -qq
-        sudo apt-get install -y curl
-
-        if ! command -v curl >/dev/null 2>&1; then
-            echo -e "${RED}✗ Could not install curl.${RESET}"
             exit 1
         fi
     fi
@@ -88,22 +110,15 @@ check_root() {
     echo -e "${CYAN}🔐 Requesting sudo access...${RESET}"
     echo ""
 
-    # --------------------------------------------------------
-    # IMPORTANT:
-    # When launched through:
-    #
-    # bash <(curl ...)
-    #
-    # $0 is usually /dev/fd/...
-    #
-    # Therefore we download the GitHub script to /tmp first,
-    # then execute the actual file through sudo.
-    # --------------------------------------------------------
-
     local bootstrap_file
 
-    bootstrap_file="$(mktemp "$TEMP_DIR/bale-bootstrap.XXXXXX.sh")"
+    bootstrap_file="$(mktemp "$TEMP_DIR/bale-bootstrap.XXXXXX.sh")" || {
+        echo -e "${RED}✗ Could not create temporary file.${RESET}"
+        exit 1
+    }
 
+    # IMPORTANT:
+    # This MUST point to bale.sh, not addon-installer.sh.
     if ! curl -fsSL \
         --connect-timeout 15 \
         --max-time 60 \
@@ -112,6 +127,17 @@ check_root() {
         -o "$bootstrap_file"; then
 
         echo -e "${RED}✗ Failed to download BALE manager.${RESET}"
+        echo ""
+        echo -e "${YELLOW}URL:${RESET} $SCRIPT_URL"
+
+        rm -f "$bootstrap_file"
+        exit 1
+    fi
+
+    if [ ! -s "$bootstrap_file" ]; then
+
+        echo -e "${RED}✗ Downloaded BALE manager is empty.${RESET}"
+
         rm -f "$bootstrap_file"
         exit 1
     fi
@@ -133,7 +159,7 @@ check_root() {
 
 banner() {
 
-    clear
+    clear 2>/dev/null || true
 
     echo -e "${CYAN}${BOLD}"
 
@@ -161,18 +187,20 @@ EOF
     echo -e "${GRAY}============================================================${RESET}"
 
     if [ -d "$PTERODACTYL_DIR" ]; then
-        echo -e "${WHITE}Panel:${RESET}     ${GREEN}Installed${RESET}"
+        echo -e "${WHITE}Panel:${RESET}      ${GREEN}Installed${RESET}"
     else
-        echo -e "${WHITE}Panel:${RESET}     ${YELLOW}Not Installed${RESET}"
+        echo -e "${WHITE}Panel:${RESET}      ${YELLOW}Not Installed${RESET}"
     fi
 
     if command -v blueprint >/dev/null 2>&1; then
-        echo -e "${WHITE}Blueprint:${RESET} ${GREEN}Ready${RESET}"
+        echo -e "${WHITE}Blueprint:${RESET}  ${GREEN}Ready${RESET}"
     else
-        echo -e "${WHITE}Blueprint:${RESET} ${YELLOW}Not Detected${RESET}"
+        echo -e "${WHITE}Blueprint:${RESET}  ${YELLOW}Not Detected${RESET}"
     fi
 
-    echo -e "${WHITE}Directory:${RESET} ${CYAN}${PTERODACTYL_DIR}${RESET}"
+    echo -e "${WHITE}Version:${RESET}    ${CYAN}${SCRIPT_VERSION}${RESET}"
+    echo -e "${WHITE}Directory:${RESET}  ${CYAN}${PTERODACTYL_DIR}${RESET}"
+
     echo -e "${GRAY}============================================================${RESET}"
     echo ""
 }
@@ -203,12 +231,21 @@ confirm() {
 }
 
 # ============================================================
+# COMMAND CHECK
+# ============================================================
+
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# ============================================================
 # PTERODACTYL CHECK
 # ============================================================
 
 check_pterodactyl() {
 
-    [ -d "$PTERODACTYL_DIR" ]
+    [ -d "$PTERODACTYL_DIR" ] &&
+    [ -f "$PTERODACTYL_DIR/artisan" ]
 }
 
 require_pterodactyl() {
@@ -218,6 +255,11 @@ require_pterodactyl() {
         echo ""
         echo -e "${RED}✗ Pterodactyl Panel was not found.${RESET}"
         echo ""
+
+        echo -e "${YELLOW}Expected:${RESET}"
+        echo "$PTERODACTYL_DIR"
+        echo ""
+
         echo -e "${YELLOW}Use menu option 1 to install Pterodactyl.${RESET}"
 
         pause_screen
@@ -236,10 +278,10 @@ install_dependencies() {
 
     local missing=()
 
-    command -v curl >/dev/null 2>&1 || missing+=("curl")
-    command -v jq >/dev/null 2>&1 || missing+=("jq")
-    command -v tar >/dev/null 2>&1 || missing+=("tar")
-    command -v file >/dev/null 2>&1 || missing+=("file")
+    command_exists curl || missing+=("curl")
+    command_exists jq || missing+=("jq")
+    command_exists tar || missing+=("tar")
+    command_exists file || missing+=("file")
 
     if [ "${#missing[@]}" -eq 0 ]; then
         return 0
@@ -249,7 +291,20 @@ install_dependencies() {
     echo -e "${YELLOW}⚙ Installing required packages...${RESET}"
     echo ""
 
-    apt-get update -qq
+    if ! command_exists apt-get; then
+
+        echo -e "${RED}✗ apt-get is not available.${RESET}"
+        echo ""
+        echo "Please install:"
+        printf '  %s\n' "${missing[@]}"
+
+        return 1
+    fi
+
+    apt-get update -qq || {
+        echo -e "${RED}✗ apt update failed.${RESET}"
+        return 1
+    }
 
     if ! apt-get install -y "${missing[@]}"; then
 
@@ -271,11 +326,12 @@ install_dependencies() {
 
 check_blueprint() {
 
-    if ! command -v blueprint >/dev/null 2>&1; then
+    if ! command_exists blueprint; then
 
         echo ""
         echo -e "${RED}✗ Blueprint CLI is not installed.${RESET}"
         echo ""
+
         echo -e "${YELLOW}Install Blueprint Framework first.${RESET}"
 
         pause_screen
@@ -337,6 +393,24 @@ spinner() {
 }
 
 # ============================================================
+# RUN COMMAND WITH LOG
+# ============================================================
+
+run_logged() {
+
+    local logfile="$1"
+    shift
+
+    "$@" >"$logfile" 2>&1 &
+
+    local pid=$!
+
+    spinner "$pid" "${RUN_MESSAGE:-Working}"
+
+    return $?
+}
+
+# ============================================================
 # FIND BLUEPRINTS
 # ============================================================
 
@@ -352,10 +426,44 @@ find_blueprints() {
         find "$PTERODACTYL_DIR" \
             -maxdepth 1 \
             -type f \
-            -name "*.blueprint" \
+            -iname "*.blueprint" \
             -printf "%f\n" 2>/dev/null |
         sort -f
     )
+}
+
+# ============================================================
+# BACKUP BLUEPRINT
+# ============================================================
+
+backup_blueprint_file() {
+
+    local blueprint_file="$1"
+    local source="$PTERODACTYL_DIR/$blueprint_file"
+
+    if [ ! -f "$source" ]; then
+        return 0
+    fi
+
+    mkdir -p "$BACKUP_DIR/blueprints"
+
+    local backup_name
+
+    backup_name="${blueprint_file}.$(date '+%Y%m%d-%H%M%S').bak"
+
+    if cp -f "$source" "$BACKUP_DIR/blueprints/$backup_name"; then
+
+        echo -e "${GREEN}✓ Blueprint backup created:${RESET}"
+        echo -e "${WHITE}$BACKUP_DIR/blueprints/$backup_name${RESET}"
+
+        return 0
+
+    else
+
+        echo -e "${RED}✗ Failed to backup Blueprint.${RESET}"
+
+        return 1
+    fi
 }
 
 # ============================================================
@@ -406,7 +514,11 @@ install_pterodactyl() {
 
     local installer_file
 
-    installer_file="$(mktemp "$TEMP_DIR/pterodactyl-installer.XXXXXX.sh")"
+    installer_file="$(mktemp "$TEMP_DIR/pterodactyl-installer.XXXXXX.sh")" || {
+        echo -e "${RED}✗ Could not create temporary installer file.${RESET}"
+        pause_screen
+        return
+    }
 
     if ! curl -fsSL \
         --connect-timeout 15 \
@@ -417,6 +529,17 @@ install_pterodactyl() {
 
         echo ""
         echo -e "${RED}✗ Failed to download installer.${RESET}"
+
+        rm -f "$installer_file"
+
+        pause_screen
+
+        return
+    fi
+
+    if [ ! -s "$installer_file" ]; then
+
+        echo -e "${RED}✗ Installer file is empty.${RESET}"
 
         rm -f "$installer_file"
 
@@ -464,33 +587,41 @@ blueprint_framework() {
         return
     fi
 
-    if command -v blueprint >/dev/null 2>&1; then
+    if command_exists blueprint; then
 
         echo -e "${GREEN}✓ Blueprint CLI detected.${RESET}"
         echo ""
         echo -e "${WHITE}Location:${RESET} $(command -v blueprint)"
         echo ""
 
-        if blueprint --version 2>/dev/null; then
-            :
+        local version
+
+        version="$(blueprint --version 2>/dev/null || true)"
+
+        if [ -n "$version" ]; then
+            echo -e "${WHITE}Version:${RESET} $version"
         fi
 
         echo ""
 
-        if confirm "Run Blueprint status"; then
+        cd "$PTERODACTYL_DIR" || return
 
-            cd "$PTERODACTYL_DIR" || return
+        if confirm "Show installed Blueprints"; then
 
-            blueprint -list 2>/dev/null || true
+            echo ""
+
+            if ! blueprint -list; then
+
+                echo ""
+                echo -e "${RED}✗ Blueprint list command failed.${RESET}"
+            fi
         fi
 
     else
 
         echo -e "${RED}✗ Blueprint CLI is not detected.${RESET}"
         echo ""
-        echo -e "${YELLOW}This menu does not install an unknown Blueprint installer automatically.${RESET}"
-        echo ""
-        echo "Install Blueprint using its official method for your Pterodactyl version."
+        echo -e "${YELLOW}Install Blueprint using its official method for your Pterodactyl version.${RESET}"
     fi
 
     pause_screen
@@ -562,14 +693,31 @@ install_one() {
     local selected="${FILES[$((choice-1))]}"
 
     echo ""
-    echo -e "${BLUE}⚡ Installing:${RESET} ${MAGENTA}${selected}${RESET}"
+    echo -e "${BLUE}⚡ Selected:${RESET} ${MAGENTA}${selected}${RESET}"
     echo ""
+
+    if ! confirm "Create backup and install this Blueprint"; then
+
+        echo -e "${YELLOW}Cancelled.${RESET}"
+
+        pause_screen
+
+        return
+    fi
+
+    backup_blueprint_file "$selected" || true
 
     cd "$PTERODACTYL_DIR" || return
 
+    local logfile="$TEMP_DIR/install-one.log"
+
+    echo ""
+    echo -e "${BLUE}⚡ Installing:${RESET} ${MAGENTA}${selected}${RESET}"
+    echo ""
+
     (
         blueprint -i "$selected"
-    ) >"$TEMP_DIR/install.log" 2>&1 &
+    ) >"$logfile" 2>&1 &
 
     local pid=$!
 
@@ -584,7 +732,7 @@ install_one() {
         echo -e "${RED}✗ Blueprint installation failed.${RESET}"
         echo ""
         echo -e "${YELLOW}Last output:${RESET}"
-        tail -n 30 "$TEMP_DIR/install.log"
+        tail -n 40 "$logfile"
     fi
 
     pause_screen
@@ -626,7 +774,7 @@ install_all() {
 
     echo ""
 
-    if ! confirm "Install all ${#FILES[@]} blueprint(s)"; then
+    if ! confirm "Backup and install all ${#FILES[@]} blueprint(s)"; then
 
         echo -e "${YELLOW}Cancelled.${RESET}"
 
@@ -639,15 +787,19 @@ install_all() {
 
     local success=0
     local failed=0
+    local file
+    local logfile="$TEMP_DIR/install-all.log"
 
     for file in "${FILES[@]}"; do
 
         echo ""
         echo -e "${CYAN}➡ Installing:${RESET} ${MAGENTA}${file}${RESET}"
 
+        backup_blueprint_file "$file" || true
+
         (
             blueprint -i "$file"
-        ) >"$TEMP_DIR/install.log" 2>&1 &
+        ) >"$logfile" 2>&1 &
 
         local pid=$!
 
@@ -662,7 +814,7 @@ install_all() {
             echo ""
             echo -e "${RED}Last output:${RESET}"
 
-            tail -n 20 "$TEMP_DIR/install.log"
+            tail -n 30 "$logfile"
         fi
     done
 
@@ -693,9 +845,11 @@ addon_load() {
     fi
 
     if ! install_dependencies; then
-
         pause_screen
+        return
+    fi
 
+    if ! check_blueprint; then
         return
     fi
 
@@ -709,7 +863,7 @@ addon_load() {
 
     read -rp "$(echo -e "${CYAN}GitHub Repo: ${RESET}")" repo_url
 
-    # Remove whitespace.
+    # Remove spaces.
     repo_url="${repo_url//[[:space:]]/}"
 
     # Remove trailing slash.
@@ -767,6 +921,15 @@ addon_load() {
         echo "  • Repository is private"
         echo "  • No published release"
         echo "  • GitHub API error"
+
+        pause_screen
+
+        return
+    fi
+
+    if ! echo "$release_json" | jq empty >/dev/null 2>&1; then
+
+        echo -e "${RED}✗ GitHub returned invalid JSON.${RESET}"
 
         pause_screen
 
@@ -924,41 +1087,39 @@ addon_load() {
         return
     fi
 
-    # --------------------------------------------------------
-    # Validate downloaded file.
-    #
-    # A Blueprint file is normally an archive/package.
-    # Do not reject it only because the `file` command gives
-    # an unusual description.
-    # --------------------------------------------------------
-
-    if command -v file >/dev/null 2>&1; then
+    if command_exists file; then
 
         echo ""
         echo -e "${GRAY}File type:${RESET} $(file -b "$temp_file")"
     fi
 
-    # --------------------------------------------------------
-    # Backup existing Blueprint before replacement.
-    # --------------------------------------------------------
-
+    # Backup existing Blueprint.
     if [ -f "$destination" ]; then
 
-        mkdir -p "$BACKUP_DIR/blueprints"
+        backup_blueprint_file "$blueprint_file" || {
 
-        local backup_name
+            echo ""
+            echo -e "${RED}✗ Backup failed. Installation cancelled for safety.${RESET}"
 
-        backup_name="${blueprint_file}.$(date '+%Y%m%d-%H%M%S').bak"
+            rm -f "$temp_file"
 
-        cp -f "$destination" \
-            "$BACKUP_DIR/blueprints/$backup_name"
+            pause_screen
 
-        echo ""
-        echo -e "${GREEN}✓ Existing Blueprint backed up.${RESET}"
+            return
+        }
     fi
 
-    # Move downloaded file into Pterodactyl directory.
-    mv -f "$temp_file" "$destination"
+    # Atomic-ish replacement.
+    if ! mv -f "$temp_file" "$destination"; then
+
+        echo -e "${RED}✗ Could not move Blueprint into Pterodactyl directory.${RESET}"
+
+        rm -f "$temp_file"
+
+        pause_screen
+
+        return
+    fi
 
     chmod 644 "$destination"
 
@@ -970,11 +1131,19 @@ addon_load() {
     echo -e "${BLUE}⚡ Installing Blueprint...${RESET}"
     echo ""
 
-    if blueprint -i "$blueprint_file"; then
+    local install_log="$TEMP_DIR/github-install.log"
+
+    (
+        blueprint -i "$blueprint_file"
+    ) >"$install_log" 2>&1 &
+
+    local pid=$!
+
+    if spinner "$pid" "Installing $blueprint_file"; then
 
         echo ""
         echo -e "${GREEN}╔════════════════════════════════════════════╗${RESET}"
-        echo -e "${GREEN}║       ✓ ADDON INSTALLED SUCCESSFULLY       ║${RESET}"
+        echo -e "${GREEN}║       ✓ ADDON INSTALLED SUCCESSFULLY      ║${RESET}"
         echo -e "${GREEN}╚════════════════════════════════════════════╝${RESET}"
 
     else
@@ -983,6 +1152,9 @@ addon_load() {
         echo -e "${RED}╔════════════════════════════════════════════╗${RESET}"
         echo -e "${RED}║          ✗ ADDON INSTALL FAILED            ║${RESET}"
         echo -e "${RED}╚════════════════════════════════════════════╝${RESET}"
+        echo ""
+        echo -e "${YELLOW}Last output:${RESET}"
+        tail -n 50 "$install_log"
         echo ""
         echo -e "${YELLOW}The downloaded Blueprint has been kept for debugging.${RESET}"
     fi
@@ -1098,9 +1270,11 @@ remove_addon() {
 
     cd "$PTERODACTYL_DIR" || return
 
+    local logfile="$TEMP_DIR/remove.log"
+
     (
         blueprint -remove "$addon"
-    ) >"$TEMP_DIR/remove.log" 2>&1 &
+    ) >"$logfile" 2>&1 &
 
     local pid=$!
 
@@ -1114,7 +1288,7 @@ remove_addon() {
         echo ""
         echo -e "${RED}✗ Addon removal failed.${RESET}"
         echo ""
-        tail -n 30 "$TEMP_DIR/remove.log"
+        tail -n 40 "$logfile"
     fi
 
     pause_screen
@@ -1167,9 +1341,11 @@ update_addon() {
     echo -e "${BLUE}⚡ Updating:${RESET} ${MAGENTA}${addon}${RESET}"
     echo ""
 
+    local logfile="$TEMP_DIR/update.log"
+
     (
         blueprint -update "$addon"
-    ) >"$TEMP_DIR/update.log" 2>&1 &
+    ) >"$logfile" 2>&1 &
 
     local pid=$!
 
@@ -1183,7 +1359,7 @@ update_addon() {
         echo ""
         echo -e "${RED}✗ Addon update failed.${RESET}"
         echo ""
-        tail -n 30 "$TEMP_DIR/update.log"
+        tail -n 40 "$logfile"
     fi
 
     pause_screen
@@ -1215,6 +1391,13 @@ system_status() {
     echo -e "${WHITE}Uptime:${RESET}     $(uptime -p 2>/dev/null || uptime)"
     echo ""
 
+    echo -e "${CYAN}BALE MANAGER${RESET}"
+    echo -e "${GRAY}------------------------------------------------------------${RESET}"
+
+    echo -e "${WHITE}Version:${RESET}    ${SCRIPT_VERSION}"
+    echo -e "${WHITE}Script:${RESET}     ${SCRIPT_URL}"
+    echo ""
+
     echo -e "${CYAN}PTERODACTYL${RESET}"
     echo -e "${GRAY}------------------------------------------------------------${RESET}"
 
@@ -1222,6 +1405,22 @@ system_status() {
 
         echo -e "${WHITE}Panel:${RESET}      ${GREEN}INSTALLED${RESET}"
         echo -e "${WHITE}Directory:${RESET}  $PTERODACTYL_DIR"
+
+        if [ -f "$PTERODACTYL_DIR/composer.json" ]; then
+
+            local panel_version
+
+            panel_version=$(
+                grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' \
+                    "$PTERODACTYL_DIR/composer.json" 2>/dev/null |
+                head -n 1 |
+                sed -E 's/.*"([^"]+)".*/\1/'
+            )
+
+            if [ -n "$panel_version" ]; then
+                echo -e "${WHITE}Version:${RESET}    $panel_version"
+            fi
+        fi
 
     else
 
@@ -1233,10 +1432,18 @@ system_status() {
     echo -e "${CYAN}BLUEPRINT${RESET}"
     echo -e "${GRAY}------------------------------------------------------------${RESET}"
 
-    if command -v blueprint >/dev/null 2>&1; then
+    if command_exists blueprint; then
 
         echo -e "${WHITE}CLI:${RESET}        ${GREEN}INSTALLED${RESET}"
         echo -e "${WHITE}Path:${RESET}       $(command -v blueprint)"
+
+        local blueprint_version
+
+        blueprint_version="$(blueprint --version 2>/dev/null || true)"
+
+        if [ -n "$blueprint_version" ]; then
+            echo -e "${WHITE}Version:${RESET}    $blueprint_version"
+        fi
 
     else
 
@@ -1257,6 +1464,8 @@ system_status() {
         wings
         docker
     )
+
+    local service
 
     for service in "${services[@]}"; do
 
@@ -1291,7 +1500,7 @@ system_status() {
 }
 
 # ============================================================
-# BACKUP
+# BACKUP PTERODACTYL
 # ============================================================
 
 backup_pterodactyl() {
@@ -1308,9 +1517,11 @@ backup_pterodactyl() {
     mkdir -p "$BACKUP_DIR"
 
     local timestamp
+
     timestamp="$(date '+%Y-%m-%d_%H-%M-%S')"
 
     local backup_file
+
     backup_file="$BACKUP_DIR/pterodactyl-$timestamp.tar.gz"
 
     echo -e "${WHITE}Backup:${RESET}"
@@ -1330,14 +1541,18 @@ backup_pterodactyl() {
     echo -e "${BLUE}Creating backup...${RESET}"
     echo ""
 
+    local logfile="$TEMP_DIR/backup.log"
+
     (
         tar \
-            --exclude="$PTERODACTYL_DIR/storage/logs/*" \
-            --exclude="$PTERODACTYL_DIR/storage/framework/cache/*" \
+            --exclude='pterodactyl/storage/logs/*' \
+            --exclude='pterodactyl/storage/framework/cache/*' \
+            --exclude='pterodactyl/storage/framework/sessions/*' \
+            --exclude='pterodactyl/storage/framework/views/*' \
             -czf "$backup_file" \
             -C /var/www \
             pterodactyl
-    ) >"$TEMP_DIR/backup.log" 2>&1 &
+    ) >"$logfile" 2>&1 &
 
     local pid=$!
 
@@ -1355,7 +1570,7 @@ backup_pterodactyl() {
         echo -e "${RED}✗ Backup failed.${RESET}"
         echo ""
 
-        tail -n 30 "$TEMP_DIR/backup.log"
+        tail -n 40 "$logfile"
 
         rm -f "$backup_file"
     fi
@@ -1410,32 +1625,302 @@ clear_cache() {
     chown -R www-data:www-data \
         "$PTERODACTYL_DIR/storage" \
         "$PTERODACTYL_DIR/bootstrap/cache" \
-        2>/dev/null
+        2>/dev/null || true
 
     chmod -R 775 \
         "$PTERODACTYL_DIR/storage" \
         "$PTERODACTYL_DIR/bootstrap/cache" \
-        2>/dev/null
+        2>/dev/null || true
 
     echo -e "${GREEN}✓ Permission check completed.${RESET}"
 
     echo ""
 
     if systemctl is-active --quiet pteroq 2>/dev/null; then
-        systemctl restart pteroq 2>/dev/null || true
-        echo -e "${GREEN}✓ pteroq restarted.${RESET}"
+
+        if systemctl restart pteroq 2>/dev/null; then
+            echo -e "${GREEN}✓ pteroq restarted.${RESET}"
+        else
+            echo -e "${YELLOW}⚠ Could not restart pteroq.${RESET}"
+        fi
     fi
 
     if systemctl is-active --quiet nginx 2>/dev/null; then
-        systemctl reload nginx 2>/dev/null || true
-        echo -e "${GREEN}✓ nginx reloaded.${RESET}"
+
+        if systemctl reload nginx 2>/dev/null; then
+            echo -e "${GREEN}✓ nginx reloaded.${RESET}"
+        else
+            echo -e "${YELLOW}⚠ Could not reload nginx.${RESET}"
+        fi
     fi
 
     pause_screen
 }
 
 # ============================================================
-# UPDATE BALE MANAGER
+# REPAIR PANEL
+# ============================================================
+
+repair_panel() {
+
+    banner
+
+    if ! require_pterodactyl; then
+        return
+    fi
+
+    echo -e "${BLUE}${BOLD}🛠 PTERODACTYL REPAIR${RESET}"
+    echo ""
+
+    echo "This will:"
+    echo "  • Fix ownership"
+    echo "  • Fix storage permissions"
+    echo "  • Fix bootstrap/cache permissions"
+    echo "  • Clear Laravel cache"
+    echo "  • Restart pteroq"
+    echo "  • Reload nginx"
+    echo ""
+
+    if ! confirm "Run Pterodactyl repair"; then
+
+        echo -e "${YELLOW}Cancelled.${RESET}"
+
+        pause_screen
+
+        return
+    fi
+
+    echo ""
+
+    echo -e "${CYAN}1. Fixing ownership...${RESET}"
+
+    chown -R www-data:www-data \
+        "$PTERODACTYL_DIR/storage" \
+        "$PTERODACTYL_DIR/bootstrap/cache" \
+        2>/dev/null || true
+
+    echo -e "${GREEN}✓ Ownership processed.${RESET}"
+
+    echo ""
+    echo -e "${CYAN}2. Fixing permissions...${RESET}"
+
+    chmod -R 775 \
+        "$PTERODACTYL_DIR/storage" \
+        "$PTERODACTYL_DIR/bootstrap/cache" \
+        2>/dev/null || true
+
+    echo -e "${GREEN}✓ Permissions processed.${RESET}"
+
+    echo ""
+    echo -e "${CYAN}3. Clearing Laravel cache...${RESET}"
+
+    cd "$PTERODACTYL_DIR" || return
+
+    if php artisan optimize:clear; then
+        echo -e "${GREEN}✓ Laravel cache cleared.${RESET}"
+    else
+        echo -e "${RED}✗ Laravel cache clear failed.${RESET}"
+    fi
+
+    echo ""
+    echo -e "${CYAN}4. Restarting services...${RESET}"
+
+    if systemctl restart pteroq 2>/dev/null; then
+        echo -e "${GREEN}✓ pteroq restarted.${RESET}"
+    else
+        echo -e "${YELLOW}⚠ pteroq not restarted.${RESET}"
+    fi
+
+    if systemctl reload nginx 2>/dev/null; then
+        echo -e "${GREEN}✓ nginx reloaded.${RESET}"
+    else
+        echo -e "${YELLOW}⚠ nginx not reloaded.${RESET}"
+    fi
+
+    echo ""
+    echo -e "${GREEN}✓ Repair completed.${RESET}"
+
+    pause_screen
+}
+
+# ============================================================
+# SERVICE MANAGER
+# ============================================================
+
+service_manager() {
+
+    banner
+
+    echo -e "${BLUE}${BOLD}⚙ PTERODACTYL SERVICE MANAGER${RESET}"
+    echo ""
+
+    echo "1. Restart pteroq"
+    echo "2. Restart Wings"
+    echo "3. Restart nginx"
+    echo "4. Restart Docker"
+    echo "5. Restart all common services"
+    echo "6. Back"
+    echo ""
+
+    read -rp "$(echo -e "${YELLOW}Select [1-6]: ${RESET}")" choice
+
+    case "$choice" in
+
+        1)
+
+            systemctl restart pteroq &&
+                echo -e "${GREEN}✓ pteroq restarted.${RESET}" ||
+                echo -e "${RED}✗ Failed to restart pteroq.${RESET}"
+
+            pause_screen
+            ;;
+
+        2)
+
+            systemctl restart wings &&
+                echo -e "${GREEN}✓ Wings restarted.${RESET}" ||
+                echo -e "${RED}✗ Failed to restart Wings.${RESET}"
+
+            pause_screen
+            ;;
+
+        3)
+
+            nginx -t || {
+                echo -e "${RED}✗ nginx configuration test failed.${RESET}"
+                pause_screen
+                return
+            }
+
+            systemctl reload nginx &&
+                echo -e "${GREEN}✓ nginx reloaded.${RESET}" ||
+                echo -e "${RED}✗ Failed to reload nginx.${RESET}"
+
+            pause_screen
+            ;;
+
+        4)
+
+            systemctl restart docker &&
+                echo -e "${GREEN}✓ Docker restarted.${RESET}" ||
+                echo -e "${RED}✗ Failed to restart Docker.${RESET}"
+
+            pause_screen
+            ;;
+
+        5)
+
+            echo ""
+
+            systemctl restart docker 2>/dev/null &&
+                echo -e "${GREEN}✓ Docker restarted.${RESET}" ||
+                echo -e "${YELLOW}⚠ Docker restart failed/skipped.${RESET}"
+
+            systemctl restart wings 2>/dev/null &&
+                echo -e "${GREEN}✓ Wings restarted.${RESET}" ||
+                echo -e "${YELLOW}⚠ Wings restart failed/skipped.${RESET}"
+
+            systemctl restart pteroq 2>/dev/null &&
+                echo -e "${GREEN}✓ pteroq restarted.${RESET}" ||
+                echo -e "${YELLOW}⚠ pteroq restart failed/skipped.${RESET}"
+
+            nginx -t >/dev/null 2>&1 && \
+                systemctl reload nginx 2>/dev/null &&
+                echo -e "${GREEN}✓ nginx reloaded.${RESET}" ||
+                echo -e "${YELLOW}⚠ nginx reload failed/skipped.${RESET}"
+
+            pause_screen
+            ;;
+
+        6)
+            return
+            ;;
+
+        *)
+            echo -e "${RED}✗ Invalid option.${RESET}"
+            sleep 2
+            ;;
+    esac
+}
+
+# ============================================================
+# VIEW LOGS
+# ============================================================
+
+view_logs() {
+
+    banner
+
+    echo -e "${BLUE}${BOLD}📜 BALE LOGS${RESET}"
+    echo ""
+
+    echo "1. Install Blueprint"
+    echo "2. GitHub Addon"
+    echo "3. Remove Addon"
+    echo "4. Update Addon"
+    echo "5. Backup"
+    echo "6. Back"
+    echo ""
+
+    read -rp "$(echo -e "${YELLOW}Select [1-6]: ${RESET}")" choice
+
+    local logfile=""
+
+    case "$choice" in
+
+        1)
+            logfile="$TEMP_DIR/install-one.log"
+            ;;
+
+        2)
+            logfile="$TEMP_DIR/github-install.log"
+            ;;
+
+        3)
+            logfile="$TEMP_DIR/remove.log"
+            ;;
+
+        4)
+            logfile="$TEMP_DIR/update.log"
+            ;;
+
+        5)
+            logfile="$TEMP_DIR/backup.log"
+            ;;
+
+        6)
+            return
+            ;;
+
+        *)
+            echo -e "${RED}✗ Invalid option.${RESET}"
+            sleep 2
+            return
+            ;;
+    esac
+
+    echo ""
+
+    if [ -f "$logfile" ]; then
+
+        echo -e "${CYAN}File:${RESET} $logfile"
+        echo ""
+        echo -e "${GRAY}------------------------------------------------------------${RESET}"
+
+        cat "$logfile"
+
+        echo -e "${GRAY}------------------------------------------------------------${RESET}"
+
+    else
+
+        echo -e "${YELLOW}No log file found.${RESET}"
+    fi
+
+    pause_screen
+}
+
+# ============================================================
+# UPDATE MANAGER
 # ============================================================
 
 update_manager() {
@@ -1445,11 +1930,12 @@ update_manager() {
     echo -e "${BLUE}${BOLD}🔄 UPDATE BALE MANAGER${RESET}"
     echo ""
 
+    echo -e "${WHITE}Current version:${RESET} ${SCRIPT_VERSION}"
     echo -e "${WHITE}Source:${RESET}"
     echo -e "${CYAN}${SCRIPT_URL}${RESET}"
     echo ""
 
-    if ! command -v curl >/dev/null 2>&1; then
+    if ! command_exists curl; then
 
         echo -e "${RED}✗ curl is not installed.${RESET}"
 
@@ -1460,7 +1946,14 @@ update_manager() {
 
     local new_file
 
-    new_file="$(mktemp "$TEMP_DIR/bale-update.XXXXXX.sh")"
+    new_file="$(mktemp "$TEMP_DIR/bale-update.XXXXXX.sh")" || {
+
+        echo -e "${RED}✗ Could not create update file.${RESET}"
+
+        pause_screen
+
+        return
+    }
 
     echo -e "${CYAN}Checking GitHub...${RESET}"
     echo ""
@@ -1492,11 +1985,65 @@ update_manager() {
         return
     fi
 
-    echo -e "${GREEN}✓ Latest version downloaded.${RESET}"
+    if ! head -n 1 "$new_file" | grep -qE '^#!.*bash'; then
+
+        echo -e "${RED}✗ Downloaded file does not look like a valid Bash script.${RESET}"
+
+        rm -f "$new_file"
+
+        pause_screen
+
+        return
+    fi
+
+    if ! bash -n "$new_file"; then
+
+        echo ""
+        echo -e "${RED}✗ Downloaded script contains syntax errors.${RESET}"
+        echo ""
+        echo "The current manager was NOT changed."
+
+        rm -f "$new_file"
+
+        pause_screen
+
+        return
+    fi
+
+    local new_version
+
+    new_version="$(
+        grep -E '^SCRIPT_VERSION=' "$new_file" |
+        head -n 1 |
+        sed -E 's/^SCRIPT_VERSION="([^"]*)".*/\1/'
+    )"
+
+    echo -e "${GREEN}✓ Downloaded latest manager.${RESET}"
+
+    if [ -n "$new_version" ]; then
+        echo -e "${WHITE}Remote version:${RESET} ${new_version}"
+    fi
+
+    echo -e "${WHITE}Current version:${RESET} ${SCRIPT_VERSION}"
     echo ""
 
-    echo -e "${YELLOW}If you launched BALE directly from GitHub, there is no local file to replace.${RESET}"
-    echo -e "${WHITE}Simply run the GitHub command again to use the newest version.${RESET}"
+    echo -e "${YELLOW}BALE is normally run directly from GitHub.${RESET}"
+    echo ""
+    echo "The safest update is to run:"
+    echo ""
+    echo -e "${CYAN}curl -fsSL $SCRIPT_URL | sudo bash${RESET}"
+    echo ""
+
+    if confirm "Run the downloaded latest version now"; then
+
+        chmod 700 "$new_file"
+
+        echo ""
+        echo -e "${BLUE}Starting updated BALE Manager...${RESET}"
+        echo ""
+
+        exec bash "$new_file"
+    fi
 
     rm -f "$new_file"
 
@@ -1504,123 +2051,188 @@ update_manager() {
 }
 
 # ============================================================
-# CLEAN TEMP
+# CLEAN OLD BACKUPS
 # ============================================================
 
-cleanup_temp() {
-
-    find "$TEMP_DIR" \
-        -type f \
-        -mtime +1 \
-        -delete 2>/dev/null || true
-}
-
-# ============================================================
-# MAIN
-# ============================================================
-
-check_root
-
-cleanup_temp
-
-install_dependencies >/dev/null 2>&1 || true
-
-while true; do
+cleanup_old_backups() {
 
     banner
 
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${CYAN}║${RESET}             ${MAGENTA}${BOLD}BALE PTERODACTYL MANAGER${RESET}             ${CYAN}║${RESET}"
-    echo -e "${CYAN}╠══════════════════════════════════════════════════════╣${RESET}"
+    echo -e "${BLUE}${BOLD}🧹 BACKUP CLEANUP${RESET}"
+    echo ""
 
-    echo -e "${CYAN}║${RESET}  ${GREEN}1.${RESET}  🚀 Install Pterodactyl Panel                 ${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  ${GREEN}2.${RESET}  🔧 Blueprint Framework                      ${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  ${GREEN}3.${RESET}  📦 Install ALL Blueprints                   ${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  ${GREEN}4.${RESET}  📦 Install ONE Blueprint                   ${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  ${BLUE}5.${RESET}  📥 Load Addon from GitHub                  ${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  ${GREEN}6.${RESET}  📋 List Installed Addons                   ${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  ${YELLOW}7.${RESET}  🗑  Remove / Uninstall Addon                ${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  ${BLUE}8.${RESET}  🔄 Update Addon                            ${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  ${CYAN}9.${RESET}  📊 System / Pterodactyl Status             ${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  ${MAGENTA}10.${RESET} 💾 Backup Pterodactyl                     ${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  ${WHITE}11.${RESET} 🧹 Clear Laravel Cache                    ${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  ${CYAN}12.${RESET} 🔄 Update BALE Manager                     ${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  ${RED}13.${RESET} ✕ Exit                                     ${CYAN}║${RESET}"
+    mkdir -p "$BACKUP_DIR"
 
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════╝${RESET}"
+    echo -e "${WHITE}Backup directory:${RESET}"
+    echo "$BACKUP_DIR"
+    echo ""
+
+    echo -e "${YELLOW}Files older than 30 days can be removed.${RESET}"
+    echo ""
+
+    find "$BACKUP_DIR" \
+        -type f \
+        -mtime +30 \
+        -print 2>/dev/null
 
     echo ""
 
-    read -rp "$(echo -e "${YELLOW}Select an option [1-13]: ${RESET}")" option
+    if confirm "Delete backups older than 30 days"; then
 
-    case "$option" in
+        find "$BACKUP_DIR" \
+            -type f \
+            -mtime +30 \
+            -delete 2>/dev/null || true
 
-        1)
-            install_pterodactyl
-            ;;
+        echo ""
+        echo -e "${GREEN}✓ Old backups cleaned.${RESET}"
 
-        2)
-            blueprint_framework
-            ;;
+    else
 
-        3)
-            install_all
-            ;;
+        echo -e "${YELLOW}Cancelled.${RESET}"
+    fi
 
-        4)
-            install_one
-            ;;
+    pause_screen
+}
 
-        5)
-            addon_load
-            ;;
+# ============================================================
+# MAIN MENU
+# ============================================================
 
-        6)
-            list_installed
-            ;;
+main_menu() {
 
-        7)
-            remove_addon
-            ;;
+    while true; do
 
-        8)
-            update_addon
-            ;;
+        banner
 
-        9)
-            system_status
-            ;;
+        echo -e "${CYAN}╔══════════════════════════════════════════════════════╗${RESET}"
+        echo -e "${CYAN}║${RESET}             ${MAGENTA}${BOLD}BALE PTERODACTYL MANAGER${RESET}             ${CYAN}║${RESET}"
+        echo -e "${CYAN}╠══════════════════════════════════════════════════════╣${RESET}"
 
-        10)
-            backup_pterodactyl
-            ;;
+        echo -e "${CYAN}║${RESET}  ${GREEN}1.${RESET}  🚀 Install Pterodactyl Panel                 ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${GREEN}2.${RESET}  🔧 Blueprint Framework                      ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${GREEN}3.${RESET}  📦 Install ALL Blueprints                   ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${GREEN}4.${RESET}  📦 Install ONE Blueprint                    ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${BLUE}5.${RESET}  📥 Load Addon from GitHub                   ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${GREEN}6.${RESET}  📋 List Installed Addons                    ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${YELLOW}7.${RESET}  🗑  Remove / Uninstall Addon                 ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${BLUE}8.${RESET}  🔄 Update Addon                             ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${CYAN}9.${RESET}  📊 System / Pterodactyl Status              ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${MAGENTA}10.${RESET} 💾 Backup Pterodactyl                      ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${WHITE}11.${RESET} 🧹 Clear Laravel Cache                     ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${CYAN}12.${RESET} 🔄 Update BALE Manager                      ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${BLUE}13.${RESET} 🛠  Repair Pterodactyl                      ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${BLUE}14.${RESET} ⚙  Service Manager                         ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${BLUE}15.${RESET} 📜 View BALE Logs                          ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${BLUE}16.${RESET} 🧹 Cleanup Old Backups                     ${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  ${RED}17.${RESET} ✕ Exit                                      ${CYAN}║${RESET}"
 
-        11)
-            clear_cache
-            ;;
+        echo -e "${CYAN}╚══════════════════════════════════════════════════════╝${RESET}"
 
-        12)
-            update_manager
-            ;;
+        echo ""
 
-        13)
-            clear
+        read -rp "$(echo -e "${YELLOW}Select an option [1-17]: ${RESET}")" option
 
-            echo ""
-            echo -e "${CYAN}${BOLD}============================================================${RESET}"
-            echo -e "${GREEN}       👋 BALE Pterodactyl Manager closed.${RESET}"
-            echo -e "${CYAN}${BOLD}============================================================${RESET}"
-            echo ""
+        case "$option" in
 
-            exit 0
-            ;;
+            1)
+                install_pterodactyl
+                ;;
 
-        *)
-            echo ""
-            echo -e "${RED}✗ Invalid option. Choose 1-13.${RESET}"
-            sleep 2
-            ;;
+            2)
+                blueprint_framework
+                ;;
 
-    esac
+            3)
+                install_all
+                ;;
 
-done
+            4)
+                install_one
+                ;;
+
+            5)
+                addon_load
+                ;;
+
+            6)
+                list_installed
+                ;;
+
+            7)
+                remove_addon
+                ;;
+
+            8)
+                update_addon
+                ;;
+
+            9)
+                system_status
+                ;;
+
+            10)
+                backup_pterodactyl
+                ;;
+
+            11)
+                clear_cache
+                ;;
+
+            12)
+                update_manager
+                ;;
+
+            13)
+                repair_panel
+                ;;
+
+            14)
+                service_manager
+                ;;
+
+            15)
+                view_logs
+                ;;
+
+            16)
+                cleanup_old_backups
+                ;;
+
+            17)
+
+                clear 2>/dev/null || true
+
+                echo ""
+                echo -e "${CYAN}${BOLD}============================================================${RESET}"
+                echo -e "${GREEN}       👋 BALE Pterodactyl Manager closed.${RESET}"
+                echo -e "${CYAN}${BOLD}============================================================${RESET}"
+                echo ""
+
+                exit 0
+                ;;
+
+            *)
+
+                echo ""
+                echo -e "${RED}✗ Invalid option. Choose 1-17.${RESET}"
+                sleep 2
+                ;;
+        esac
+    done
+}
+
+# ============================================================
+# START
+# ============================================================
+
+check_root "$@"
+
+mkdir -p "$TEMP_DIR" 2>/dev/null || true
+
+# Install dependencies silently at startup.
+# If installation fails, individual features will report
+# the missing dependency instead of crashing the manager.
+install_dependencies >/dev/null 2>&1 || true
+
+main_menu
